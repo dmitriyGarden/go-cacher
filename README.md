@@ -9,7 +9,7 @@ This package provides dependency cache
  ==========
  
  
- See [example](https://github.com/dmitriyGarden/go-cacher/tree/master/example)
+ See [example](https://github.com/dmitriyGarden/go-cacher/blob/master/example/cache.go)
  
  
  It is safe to use in multiple goroutines
