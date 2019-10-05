@@ -1,7 +1,8 @@
-package go_cacher
+package cacher
 
 import "time"
 
+//IDependency is an abstract dependency data
 type IDependency interface {
 	//GetKey return key of dependency counter
 	GetKey() string
@@ -9,6 +10,7 @@ type IDependency interface {
 	GetValue() int64
 }
 
+//Dependency is a dependency data
 type Dependency struct {
 	Key   string
 	Value int64
@@ -24,6 +26,7 @@ func (d Dependency) GetValue() int64 {
 	return d.Value
 }
 
+//ICache is an abstract cache, which describe methods
 type ICache interface {
 	//Set sets value of key with ttl and dependencies
 	Set(key, value string, ttl *time.Duration, dependency ...IDependency) error

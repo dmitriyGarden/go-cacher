@@ -1,7 +1,7 @@
 package main
 
 import (
-	cacher "github.com/dmitriyGarden/go-cacher"
+	"github.com/dmitriyGarden/go-cacher"
 	"github.com/go-redis/redis"
 	"log"
 	"time"

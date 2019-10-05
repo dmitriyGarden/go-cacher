@@ -1,4 +1,4 @@
-package go_cacher
+package cacher
 
 import (
 	"errors"
@@ -10,6 +10,7 @@ import (
 
 const depKey = "dpn"
 
+//RedisConfig structure is used for configure redis based cache
 type RedisConfig struct {
 	Client           redis.UniversalClient
 	KeyPrefix        string
@@ -17,6 +18,7 @@ type RedisConfig struct {
 	LogPrefix        string
 }
 
+//Redis is implements of ICache methods
 type Redis struct {
 	conf          *RedisConfig
 	dependencyKey string
@@ -196,6 +198,7 @@ func (r *Redis) Clear() error {
 	return nil
 }
 
+//NewRedis creat structure which implements ICache interface
 func NewRedis(conf *RedisConfig) (ICache, error) {
 	if conf == nil {
 		return nil, errors.New("config cannot be nil")

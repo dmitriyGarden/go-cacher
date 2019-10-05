@@ -1,4 +1,4 @@
-package go_cacher
+package cacher
 
 import (
 	"github.com/go-redis/redis"
@@ -247,8 +247,8 @@ func TestRedis(t *testing.T) {
 	if err != nil {
 		t.Error("Expected nil, got", err)
 	}
-	dep1.Value += 1
-	dep2.Value += 1
+	dep1.Value++
+	dep2.Value++
 	if !compareDeps(deps, []Dependency{dep1, dep2}) {
 		t.Errorf("Expected %#v, got %#v", []Dependency{dep1, dep2}, deps)
 	}
@@ -308,7 +308,7 @@ func getFakeRedisClient() redis.UniversalClient {
 func getRedisClient() redis.UniversalClient {
 	c := redis.NewClient(&redis.Options{
 		Addr:     "127.0.0.1:6379",
-		Password: "vagrant",
+		Password: "",
 	})
 	return c
 }

@@ -1,4 +1,4 @@
-package go_cacher
+package cacher
 
 import "testing"
 
