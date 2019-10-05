@@ -3,13 +3,18 @@ package go_cacher
 import (
 	"errors"
 	"github.com/go-redis/redis"
+	"log"
+	"strconv"
 	"time"
 )
+
+const depKey = "dpn"
 
 type RedisConfig struct {
 	Client           redis.UniversalClient
 	KeyPrefix        string
 	DependencyPrefix string
+	LogPrefix        string
 }
 
 type Redis struct {
@@ -17,34 +22,59 @@ type Redis struct {
 	dependencyKey string
 }
 
+//GetDependencies returns dependency by key
+func (r *Redis) GetDependencies(depKey ...string) ([]Dependency, error) {
+	m, err := r.getDependencies(depKey)
+	if err != nil {
+		return nil, err
+	}
+	res := make([]Dependency, 0, len(m))
+	for k, val := range m {
+		counter, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			log.Println(r.conf.LogPrefix, err)
+		} else {
+			res = append(res, Dependency{
+				Key:   k,
+				Value: counter,
+			})
+		}
+	}
+	return res, nil
+}
+
 func (r *Redis) prepareKey(key string) string {
 	return r.conf.KeyPrefix + key
 }
 
 //Set sets value of key with ttl and dependencies
-func (r *Redis) Set(key, value string, ttl *time.Duration, dependencies ...Dependency) error {
+func (r *Redis) Set(key, value string, ttl *time.Duration, dependency ...IDependency) error {
 	key = r.prepareKey(key)
 	sets := make(map[string]interface{})
 	sets["value"] = value
-	for i := range dependencies {
-		sets[dependencies[i].GetKey()] = dependencies[i].GetValue()
+	for i := range dependency {
+		sets[dependency[i].GetKey()] = dependency[i].GetValue()
 	}
-	pipe := r.conf.Client.TxPipeline()
-	pipe.Del(key)
-	pipe.HMSet(key, sets)
+	res := r.conf.Client.Del(key)
+	if res.Err() != nil && res.Err() != redis.Nil {
+		return res.Err()
+	}
+	status := r.conf.Client.HMSet(key, sets)
+	if status.Err() != nil {
+		return status.Err()
+	}
 	if ttl != nil {
-		pipe.Expire(key, *ttl)
+		res := r.conf.Client.Expire(key, *ttl)
+		if res.Err() != nil {
+			return res.Err()
+		}
 	}
-	_, err := pipe.Exec()
-	return err
+	return nil
 }
 
 //Get returns value of key
-func (r *Redis) Get(key string) (value string, ok bool, err error) {
+func (r *Redis) Get(key string) (value string, dependencies []Dependency, ok bool, err error) {
 	v := r.conf.Client.HGetAll(r.prepareKey(key))
-	if v.Err() == redis.Nil {
-		return
-	}
 	if v.Err() != nil {
 		err = v.Err()
 		return
@@ -63,6 +93,15 @@ func (r *Redis) Get(key string) (value string, ok bool, err error) {
 			ok = true
 		} else {
 			deps = append(deps, k)
+			counter, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				log.Println(r.conf.LogPrefix, err)
+			} else {
+				dependencies = append(dependencies, Dependency{
+					Key:   k,
+					Value: counter,
+				})
+			}
 		}
 	}
 	if !ok {
@@ -76,16 +115,19 @@ func (r *Redis) Get(key string) (value string, ok bool, err error) {
 	// validate dependencies
 	current, err := r.getDependencies(deps)
 	if err != nil {
-		return "", false, err
+		return "", nil, false, err
 	}
 	for k, val := range m {
+		if k == "value" {
+			continue
+		}
 		if current[k] != val {
 			// invalidate
 			r.Del(key)
-			return "", false, nil
+			return "", nil, false, nil
 		}
 	}
-	return value, true, nil
+	return value, dependencies, true, nil
 }
 
 func (r *Redis) getDependencies(depKeys []string) (map[string]string, error) {
@@ -93,9 +135,6 @@ func (r *Redis) getDependencies(depKeys []string) (map[string]string, error) {
 		return map[string]string{}, nil
 	}
 	v := r.conf.Client.HMGet(r.dependencyKey, depKeys...)
-	if v.Err() == redis.Nil {
-		return map[string]string{}, nil
-	}
 	if v.Err() != nil {
 		return nil, v.Err()
 	}
@@ -115,9 +154,6 @@ func (r *Redis) getDependencies(depKeys []string) (map[string]string, error) {
 //Del delete key from cache
 func (r *Redis) Del(key string) error {
 	res := r.conf.Client.Del(r.prepareKey(key))
-	if res.Err() == redis.Nil {
-		return nil
-	}
 	return res.Err()
 }
 
@@ -139,47 +175,33 @@ func (r *Redis) IncrDependency(depKey ...string) error {
 }
 
 //SetDependency  sets value of dependency
-func (r *Redis) SetDependency(dependencies ...Dependency) error {
-	if len(dependencies) == 0 {
+func (r *Redis) SetDependency(dependency ...IDependency) error {
+	if len(dependency) == 0 {
 		return nil
 	}
 	m := make(map[string]interface{})
-	for _, v := range dependencies {
+	for _, v := range dependency {
 		m[v.GetKey()] = v.GetValue()
 	}
 	res := r.conf.Client.HMSet(r.dependencyKey, m)
 	return res.Err()
 }
 
-//Clear clear all cache
+//Clear invalidate all cache
 func (r *Redis) Clear() error {
 	res := r.conf.Client.Del(r.dependencyKey)
 	if res.Err() != nil && res.Err() != redis.Nil {
 		return res.Err()
 	}
-	cursor := uint64(0)
-	for {
-		res := r.conf.Client.Scan(cursor, r.conf.KeyPrefix+"*", 100)
-		keys, cursor, err := res.Result()
-		if err != nil {
-			return err
-		}
-		if len(keys) > 0 {
-			res := r.conf.Client.Del(keys...)
-			if res.Err() != nil {
-				return res.Err()
-			}
-		}
-		if cursor == 0 {
-			break
-		}
-	}
 	return nil
 }
 
-func NewRedis(conf *RedisConfig) (Cache, error) {
+func NewRedis(conf *RedisConfig) (ICache, error) {
 	if conf == nil {
 		return nil, errors.New("config cannot be nil")
+	}
+	if conf.Client == nil {
+		return nil, errors.New("Client required")
 	}
 	if conf.KeyPrefix == "" {
 		return nil, errors.New("KeyPrefix required")
@@ -187,11 +209,8 @@ func NewRedis(conf *RedisConfig) (Cache, error) {
 	if conf.DependencyPrefix == "" {
 		return nil, errors.New("DependencyPrefix required")
 	}
-	if conf.Client == nil {
-		return nil, errors.New("Client required")
-	}
 	return &Redis{
 		conf:          conf,
-		dependencyKey: conf.KeyPrefix + "dpn",
+		dependencyKey: conf.DependencyPrefix + depKey,
 	}, nil
 }
