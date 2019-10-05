@@ -12,6 +12,8 @@ This package provides dependency cache
  See [example](https://github.com/dmitriyGarden/go-cacher/blob/master/example/cache.go)
  
  
+ See [documentation](https://godoc.org/github.com/dmitriyGarden/go-cacher)
+ 
  It is safe to use in multiple goroutines
  
  
