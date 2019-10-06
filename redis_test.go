@@ -117,7 +117,7 @@ func getFakeRedisClient() redis.UniversalClient {
 func getRedisClient() redis.UniversalClient {
 	c := redis.NewClient(&redis.Options{
 		Addr:     "127.0.0.1:6379",
-		Password: "vagrant",
+		Password: "",
 	})
 	return c
 }
