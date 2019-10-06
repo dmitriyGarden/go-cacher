@@ -23,7 +23,6 @@ This package provides dependency cache
  - [Redis](https://redis.io)
  - [Redis sentinel](https://redis.io/topics/sentinel)
  - [Redis cluster](https://redis.io/topics/cluster-tutorial)
- - [Dynomite](https://github.com/Netflix/dynomite) 
  
  
  TODO:

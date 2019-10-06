@@ -1,3 +1,5 @@
+github.com/andrew-d/lzma v0.0.0-20120628231508-2a7c55cad4a2 h1:KM8pJPCareVZXEkF0G8P+Ur1je6Pq7L/RxFUl16QECM=
+github.com/andrew-d/lzma v0.0.0-20120628231508-2a7c55cad4a2/go.mod h1:V2Zq7V6SavvZE8LTsChyuw4I/zAfmTOngC9A7GL3AXQ=
 github.com/fsnotify/fsnotify v1.4.7 h1:IXs+QLmnXW2CcXuY+8Mzv/fWEsPGWxqefPtCP5CnV9I=
 github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMoQvtojpjFo=
 github.com/go-redis/redis v6.15.5+incompatible h1:pLky8I0rgiblWfa8C1EV7fPEUv0aH6vKRaYHc/YRHVk=

@@ -4,24 +4,23 @@ import (
 	"errors"
 	"github.com/go-redis/redis"
 	"log"
+	"reflect"
 	"strconv"
 	"time"
 )
 
-const depKey = "dpn"
-
 //RedisConfig structure is used for configure redis based cache
 type RedisConfig struct {
-	Client           redis.UniversalClient
-	KeyPrefix        string
-	DependencyPrefix string
-	LogPrefix        string
+	Client             redis.UniversalClient
+	KeyPrefix          string
+	DependencyPrefix   string
+	LogPrefix          string
+	EnableDataCompress bool
 }
 
 //Redis is implements of ICache methods
 type Redis struct {
-	conf          *RedisConfig
-	dependencyKey string
+	conf *RedisConfig
 }
 
 //GetDependencies returns dependency by key
@@ -49,18 +48,28 @@ func (r *Redis) prepareKey(key string) string {
 	return r.conf.KeyPrefix + key
 }
 
+func (r *Redis) prepareDepKey(key string) string {
+	return r.conf.DependencyPrefix + key
+}
+
 //Set sets value of key with ttl and dependencies
 func (r *Redis) Set(key, value string, ttl *time.Duration, dependency ...IDependency) error {
+	data, err := marshalData(value, dependency...)
+	if err != nil {
+		return err
+	}
 	key = r.prepareKey(key)
-	sets := make(map[string]interface{})
-	sets["value"] = value
-	for i := range dependency {
-		sets[dependency[i].GetKey()] = dependency[i].GetValue()
+	sets := map[string]interface{}{}
+	if r.conf.EnableDataCompress {
+		data, err = compressData(data)
+		if err != nil {
+			return err
+		}
+		sets["c"] = "1"
+	} else {
+		sets["c"] = "0"
 	}
-	res := r.conf.Client.Del(key)
-	if res.Err() != nil && res.Err() != redis.Nil {
-		return res.Err()
-	}
+	sets["v"] = string(data[:])
 	status := r.conf.Client.HMSet(key, sets)
 	if status.Err() != nil {
 		return status.Err()
@@ -70,8 +79,18 @@ func (r *Redis) Set(key, value string, ttl *time.Duration, dependency ...IDepend
 		if res.Err() != nil {
 			return res.Err()
 		}
+		r.setDepTTL(*ttl*2, dependency...)
 	}
 	return nil
+}
+
+func (r *Redis) setDepTTL(ttl time.Duration, dependency ...IDependency) {
+	for _, dep := range dependency {
+		res := r.conf.Client.Expire(r.prepareDepKey(dep.GetKey()), ttl)
+		if res.Err() != nil {
+			log.Println(r.conf.LogPrefix, res.Err())
+		}
+	}
 }
 
 //Get returns value of key
@@ -88,46 +107,51 @@ func (r *Redis) Get(key string) (value string, dependencies []Dependency, ok boo
 	}
 
 	m := v.Val()
-	deps := make([]string, 0, len(m))
-	for k, val := range m {
-		if k == "value" {
-			value = val
-			ok = true
-		} else {
-			deps = append(deps, k)
-			counter, err := strconv.ParseInt(val, 10, 64)
-			if err != nil {
-				log.Println(r.conf.LogPrefix, err)
-			} else {
-				dependencies = append(dependencies, Dependency{
-					Key:   k,
-					Value: counter,
-				})
-			}
-		}
-	}
+	var data string
+	data, ok = m["v"]
 	if !ok {
 		// bad value
 		err = r.Del(key)
 		return
 	}
-	if len(deps) == 0 {
+	//decompress value
+	if m["c"] == "1" {
+		d := make([]byte, 0)
+		d, err = decompressData([]byte(data))
+		if err != nil {
+			ok = false
+			return
+		}
+		data = string(d[:])
+	}
+
+	res := &storageData{}
+	res, err = unmarshalData([]byte(data))
+	if err != nil {
+		ok = false
 		return
 	}
+	value = res.Value
+	dependencies = res.Dependency
+	if len(res.Dependency) == 0 {
+		return
+	}
+
 	// validate dependencies
+	deps := make([]string, 0, len(res.Dependency))
+	oldDeps := map[string]string{}
+	for _, dep := range res.Dependency {
+		deps = append(deps, dep.GetKey())
+		oldDeps[dep.GetKey()] = strconv.FormatInt(dep.GetValue(), 10)
+	}
 	current, err := r.getDependencies(deps)
 	if err != nil {
 		return "", nil, false, err
 	}
-	for k, val := range m {
-		if k == "value" {
-			continue
-		}
-		if current[k] != val {
-			// invalidate
-			r.Del(key)
-			return "", nil, false, nil
-		}
+	if !reflect.DeepEqual(current, oldDeps) {
+		// invalidate
+		r.Del(key)
+		return "", nil, false, nil
 	}
 	return value, dependencies, true, nil
 }
@@ -136,7 +160,11 @@ func (r *Redis) getDependencies(depKeys []string) (map[string]string, error) {
 	if len(depKeys) == 0 {
 		return map[string]string{}, nil
 	}
-	v := r.conf.Client.HMGet(r.dependencyKey, depKeys...)
+	keys := make([]string, len(depKeys))
+	for i := range depKeys {
+		keys[i] = r.prepareDepKey(depKeys[i])
+	}
+	v := r.conf.Client.MGet(keys...)
 	if v.Err() != nil {
 		return nil, v.Err()
 	}
@@ -160,42 +188,99 @@ func (r *Redis) Del(key string) error {
 }
 
 //IncrDependency increment dependency counter
-func (r *Redis) IncrDependency(depKey ...string) error {
+func (r *Redis) IncrDependency(ttl *time.Duration, depKey ...string) error {
 	if len(depKey) == 0 {
 		return nil
 	}
 	if len(depKey) == 1 {
-		res := r.conf.Client.HIncrBy(r.dependencyKey, depKey[0], 1)
+		res := r.conf.Client.Incr(r.prepareDepKey(depKey[0]))
 		return res.Err()
 	}
 	pipe := r.conf.Client.TxPipeline()
 	for _, key := range depKey {
-		pipe.HIncrBy(r.dependencyKey, key, 1)
+		k := r.prepareDepKey(key)
+		pipe.Incr(k)
+		if ttl != nil {
+			pipe.Expire(k, *ttl)
+		}
+
 	}
 	_, err := pipe.Exec()
 	return err
 }
 
 //SetDependency  sets value of dependency
-func (r *Redis) SetDependency(dependency ...IDependency) error {
+func (r *Redis) SetDependency(ttl *time.Duration, dependency ...IDependency) error {
 	if len(dependency) == 0 {
 		return nil
 	}
-	m := make(map[string]interface{})
-	for _, v := range dependency {
-		m[v.GetKey()] = v.GetValue()
+	pairs := make([]interface{}, 0, len(dependency)*2)
+	keys := make([]string, 0, len(dependency))
+	pipe := r.conf.Client.TxPipeline()
+	for _, dep := range dependency {
+		key := r.prepareDepKey(dep.GetKey())
+		if ttl != nil {
+			keys = append(keys, key)
+		}
+		pairs = append(pairs, key, dep.GetValue())
 	}
-	res := r.conf.Client.HMSet(r.dependencyKey, m)
-	return res.Err()
+	pipe.MSet(pairs...)
+	for _, key := range keys {
+		if ttl != nil {
+			pipe.Expire(key, *ttl)
+		}
+	}
+	_, err := pipe.Exec()
+	return err
 }
 
 //Clear invalidate all cache
 func (r *Redis) Clear() error {
-	res := r.conf.Client.Del(r.dependencyKey)
-	if res.Err() != nil && res.Err() != redis.Nil {
-		return res.Err()
+	err := r.clearDeps()
+	if err != nil {
+		return err
 	}
-	return nil
+	return r.clearCache()
+}
+
+func (r *Redis) clearDeps() error {
+	cursor := uint64(0)
+	for {
+		res := r.conf.Client.Scan(cursor, r.conf.DependencyPrefix+"*", 100)
+		keys, cursor, err := res.Result()
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			res := r.conf.Client.Del(keys...)
+			if res.Err() != nil {
+				return res.Err()
+			}
+		}
+		if cursor == 0 {
+			return nil
+		}
+	}
+}
+
+func (r *Redis) clearCache() error {
+	cursor := uint64(0)
+	for {
+		res := r.conf.Client.Scan(cursor, r.conf.KeyPrefix+"*", 100)
+		keys, cursor, err := res.Result()
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			res := r.conf.Client.Del(keys...)
+			if res.Err() != nil {
+				return res.Err()
+			}
+		}
+		if cursor == 0 {
+			return nil
+		}
+	}
 }
 
 //NewRedis creat structure which implements ICache interface
@@ -204,7 +289,7 @@ func NewRedis(conf *RedisConfig) (ICache, error) {
 		return nil, errors.New("config cannot be nil")
 	}
 	if conf.Client == nil {
-		return nil, errors.New("Client required")
+		return nil, errors.New("client required")
 	}
 	if conf.KeyPrefix == "" {
 		return nil, errors.New("KeyPrefix required")
@@ -213,7 +298,6 @@ func NewRedis(conf *RedisConfig) (ICache, error) {
 		return nil, errors.New("DependencyPrefix required")
 	}
 	return &Redis{
-		conf:          conf,
-		dependencyKey: conf.DependencyPrefix + depKey,
+		conf: conf,
 	}, nil
 }

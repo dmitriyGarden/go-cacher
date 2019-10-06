@@ -12,8 +12,8 @@ type IDependency interface {
 
 //Dependency is a dependency data
 type Dependency struct {
-	Key   string
-	Value int64
+	Key   string `json:"k"`
+	Value int64  `json:"v"`
 }
 
 //GetKey return key of dependency counter
@@ -35,11 +35,11 @@ type ICache interface {
 	//Del delete key from cache
 	Del(key string) error
 	//IncrDependency increment dependency counter
-	IncrDependency(depKey ...string) error
+	IncrDependency(ttl *time.Duration, depKey ...string) error
 	//GetDependencies returns dependency by key
 	GetDependencies(depKey ...string) ([]Dependency, error)
 	//SetDependency  sets value of dependency
-	SetDependency(dependencies ...IDependency) error
+	SetDependency(ttl *time.Duration, dependencies ...IDependency) error
 	//Clear clear all cache
 	Clear() error
 }

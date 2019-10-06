@@ -79,15 +79,16 @@ func cacheExample(cache cacher.ICache) {
 		Value: 0,
 	}
 
+	ttl := time.Duration(time.Hour * 5)
 	//Put dependencies into storage
-	err := cache.SetDependency(dep1, dep2)
+	ttlDeps := ttl * 2
+	err := cache.SetDependency(&ttlDeps, dep1, dep2)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	//Add data to cache
-	duration := time.Duration(time.Hour * 5)
-	err = cache.Set("my-key", "my value", &duration, dep1, dep2)
+	//Add data to cache)
+	err = cache.Set("my-key", "my value", &ttl, dep1, dep2)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func cacheExample(cache cacher.ICache) {
 	}
 
 	//Invalidate data by dependency dep1
-	err = cache.IncrDependency(dep1.GetKey())
+	err = cache.IncrDependency(nil, dep1.GetKey())
 	if err != nil {
 		log.Fatal(err)
 	}
