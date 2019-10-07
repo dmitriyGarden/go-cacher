@@ -2,8 +2,8 @@ package cacher
 
 import (
 	"bytes"
+	"compress/flate"
 	"encoding/json"
-	"github.com/andrew-d/lzma"
 	"io/ioutil"
 )
 
@@ -37,20 +37,22 @@ func unmarshalData(data []byte) (*storageData, error) {
 
 func compressData(data []byte) ([]byte, error) {
 	var b bytes.Buffer
-	w := lzma.NewWriter(&b)
-	_, err := w.Write(data)
+	zw, err := flate.NewWriter(&b, flate.DefaultCompression)
 	if err != nil {
 		return nil, err
 	}
-	err = w.Close()
+	_, err = zw.Write(data)
 	if err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil
 }
 
 func decompressData(data []byte) ([]byte, error) {
-	r := lzma.NewReader(bytes.NewBuffer(data))
+	r := flate.NewReader(bytes.NewBuffer(data))
 	defer r.Close()
 	return ioutil.ReadAll(r)
 }
